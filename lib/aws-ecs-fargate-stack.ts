@@ -1,22 +1,24 @@
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from "aws-cdk-lib/aws-ec2";
-import * as ecs from "aws-cdk-lib/aws-ecs";
-import * as ecs_patterns from "aws-cdk-lib/aws-ecs-patterns";
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 import { Construct } from 'constructs';
-import * as iam from 'aws-cdk-lib/aws-iam';
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class AwsEcsFargateStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // devinde vpc for the ecs task
-    const vpc = new ec2.Vpc(this, "ecs-vps", {
-      maxAzs: 2 // Default is all AZs in region
-    });
+    // **VPC for hosting the ECS tasks:**
+    // - Spans 2 Availability Zones for improved availability.
+    // - Adjust maxAzs based on regional availability and needs.
+    const vpc = new ec2.Vpc(this, 'ecs-vps', { maxAzs: 2 });
 
-    // role for the ecs task
+    // **IAM Roles for ECS tasks:**
+    // - TaskRole: Access to resources needed for task execution.
+    // - ExecutionRole: Additional permissions for task execution.
+    // - Both roles use the managed policy AmazonECSTaskExecutionRolePolicy.
     const taskRole = new iam.Role(this, 'TaskRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
@@ -30,12 +32,13 @@ export class AwsEcsFargateStack extends cdk.Stack {
       managedPolicyArn: 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy',
     });
 
-    //create ecs cluster
-    const cluster = new ecs.Cluster(this, "ecs-cluster", {
-      vpc: vpc
-    });
+    // **ECS Cluster for managing containers:**
+    const cluster = new ecs.Cluster(this, 'ecs-cluster', { vpc: vpc });
 
-    //create ecs task definition
+    // **ECS Task Definition:**
+    // - Outlines container configuration and resource requirements.
+    // - Uses Fargate compatibility for serverless compute.
+    // - Assigns the previously created IAM roles.
     const taskDefinition = new ecs.TaskDefinition(this, 'TaskDefinition', {
       taskRole,
       executionRole,
@@ -44,52 +47,42 @@ export class AwsEcsFargateStack extends cdk.Stack {
       memoryMiB: '2048',
     });
 
-    //create a task definition
-    // use an example container: https://gallery.ecr.aws/ecs-sample-image/amazon-ecs-sample
+    // **Container within the Task Definition:**
+    // - Uses a sample image from Amazon ECR Public Gallery for demonstration.
+    // - Sets up logging for container output.
+    // - Injects the AWS region as an environment variable.
     const nodeServiceContainer = taskDefinition.addContainer('ecs-sample-app', {
-      //image: ecs.ContainerImage.fromEcrRepository(repository, ''),
-      image: ecs.ContainerImage.fromRegistry("amazon/amazon-ecs-sample"),
-      logging: new ecs.AwsLogDriver({
-        streamPrefix: 'amazon-ecs-sample',
-      }),
-      environment: {
-        'region': this.region,
-      }
+      image: ecs.ContainerImage.fromRegistry('amazon/amazon-ecs-sample'),
+      logging: new ecs.AwsLogDriver({ streamPrefix: 'amazon-ecs-sample' }),
+      environment: { region: this.region },
     });
 
-    nodeServiceContainer.addPortMappings({
-      containerPort: 80,
-    });
+    // Exposes container port 80 for external access.
+    nodeServiceContainer.addPortMappings({ containerPort: 80 });
 
-    //create a capacityProviderStrategies for fargate spot ract
-    const capacityProviderStrategies = [{
-      capacityProvider: 'FARGATE_SPOT',
-      weight: 1,
-    }];
-
+    // **Load Balanced Fargate Service:**
+    // - Deploys the ECS task in an autoscaling, load-balanced configuration.
+    // - Leverages Fargate Spot for potential cost savings.
     const ecsService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'ecs-fargate-service', {
       cluster,
       taskDefinition,
-      capacityProviderStrategies: capacityProviderStrategies,
+      capacityProviderStrategies: [{ capacityProvider: 'FARGATE_SPOT', weight: 1 }],
     });
 
-    //health endpoint
+    // **Health Check for service monitoring:**
     ecsService.targetGroup.configureHealthCheck({
       path: '/',
       interval: cdk.Duration.seconds(10),
-      timeout: cdk.Duration.seconds(5)
+      timeout: cdk.Duration.seconds(5),
     });
 
-    // Add autoscaling
+   // Add autoscaling
     const scaling = ecsService.service.autoScaleTaskCount({
       minCapacity: 1,
       maxCapacity: 10
     });
 
-    // Scale on CPU utilization
-    scaling.scaleOnCpuUtilization('CpuScaling', {
-      targetUtilizationPercent: 50
-    });
-
+    // **Autoscaling for dynamic resource allocation:**
+    scaling.scaleOnCpuUtilization('CpuScaling', { targetUtilizationPercent: 50 });
   }
 }
